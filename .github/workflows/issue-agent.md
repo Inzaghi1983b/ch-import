@@ -34,6 +34,13 @@ safe-outputs:
     draft: true
     title-prefix: "[agent] "
     labels: [agent-pr]
+    # Technische Grenze, die der Agent nicht aendern kann: nur diese Pfade, Manifest- und
+    # Anweisungsdateien gesperrt, Patch hoechstens 200 KB. Verstoesse verhindern den PR.
+    allowed-files:
+      - src/**
+      - tests/**
+    protected-files: blocked
+    max-patch-size: 200
   add-comment:
     max: 1
   threat-detection:
@@ -65,4 +72,5 @@ ${{ steps.sanitized.outputs.text }}
    `add_comment` im Issue kurz erklaeren, was fehlt.
 
 Aendere nie `.github/`, `AGENTS.md`, `pyproject.toml` oder `requirements-dev.txt`, und schwaeche
-keine Tests ab.
+keine Tests ab. Aenderungen ausserhalb von `src/` und `tests/` lehnt der Workflow technisch ab; der
+Pull Request entsteht dann nicht.
