@@ -1,7 +1,7 @@
 name: Agent-Gate
 
 # Prueft Agenten-PRs (Autor github-actions[bot] oder die eigene Mini-App) nach jedem abgeschlossenen CI-Lauf und aktiviert dann
-# GitHub-Auto-Merge. Trigger workflow_run, weil per GITHUB_TOKEN erzeugte PRs kein pull_request_target
+# GitHub-Auto-Merge, aber nur wenn das Repo Auto-Merge erlaubt (allow_auto_merge); sonst bleibt der PR unberuehrt. Trigger workflow_run, weil per GITHUB_TOKEN erzeugte PRs kein pull_request_target
 # ausloesen (belegt in ch-import #24/#25: 0 Laeufe). Fuehrt NIE Code oder Artefakte aus dem PR aus:
 # kein Checkout, nur API-Aufrufe. Alles Wesentliche (Lauf, PR, Autor, HEAD, Pflicht-Check) wird
 # unabhaengig ueber die GitHub-API geprueft, nicht dem Ereignis geglaubt.
@@ -156,7 +156,8 @@ jobs:
               if pr["user"]["login"] not in AGENT_AUTHORS or pr["user"]["type"] != "Bot":
                   print(f"Kein Agenten-PR (Autor {s(pr['user']['login'])}): uebersprungen.")
                   return 0
-              standard = json.loads(gh("api", f"repos/{REPO}"))["default_branch"]
+              repo = json.loads(gh("api", f"repos/{REPO}"))
+              standard = repo["default_branch"]
               if (pr["state"] != "open" or pr["head"]["repo"]["full_name"] != REPO
                       or pr["base"]["repo"]["full_name"] != REPO or pr["base"]["ref"] != standard):
                   return stopp("PR nicht offen, aus Fork oder nicht gegen den Standard-Branch")
@@ -177,6 +178,10 @@ jobs:
                   gh("pr", "merge", pr_nr, "--repo", REPO, "--disable-auto", fatal=False)
                   return 1
               print(f"Gate bestanden: PR {pr_nr}, {len(dateien)} Datei(en), HEAD {HEAD_SHA[:8]}.")
+              if not repo.get("allow_auto_merge"):
+                  # Sonst wuerde `gh pr merge --auto` einen bereits gruenen PR sofort direkt mergen.
+                  print("Auto-Merge ist im Repo nicht erlaubt: keine Integration, Draft-Status unveraendert.")
+                  return 0
               if pr.get("draft"):
                   gh("pr", "ready", pr_nr, "--repo", REPO)
               if pr.get("auto_merge"):
