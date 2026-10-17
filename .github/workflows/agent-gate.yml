@@ -1,6 +1,6 @@
 name: Agent-Gate
 
-# Prueft Agenten-PRs (Autor github-actions[bot]) nach jedem abgeschlossenen CI-Lauf und aktiviert dann
+# Prueft Agenten-PRs (Autor github-actions[bot] oder die eigene Mini-App) nach jedem abgeschlossenen CI-Lauf und aktiviert dann
 # GitHub-Auto-Merge. Trigger workflow_run, weil per GITHUB_TOKEN erzeugte PRs kein pull_request_target
 # ausloesen (belegt in ch-import #24/#25: 0 Laeufe). Fuehrt NIE Code oder Artefakte aus dem PR aus:
 # kein Checkout, nur API-Aufrufe. Alles Wesentliche (Lauf, PR, Autor, HEAD, Pflicht-Check) wird
@@ -47,6 +47,8 @@ jobs:
           REPO = os.environ["REPO"]
           RUN_ID = os.environ["RUN_ID"]
           HEAD_SHA = os.environ["HEAD_SHA"]
+          # Erlaubte Bot-Autoren: gh-aw-Standard und die eigene Mini-App (Slug nach App-Anlage eintragen).
+          AGENT_AUTHORS = ("github-actions[bot]", "ai-projects-agent-pr[bot]")
           CI_NAME = "CI"
           CI_PFAD = ".github/workflows/ci.yml"
           PFLICHT_CHECK = "test"
@@ -151,7 +153,7 @@ jobs:
                   return stopp(f"CI-Lauf ist nicht genau einem PR zugeordnet ({len(zuordnung)})")
               pr_nr = str(zuordnung[0]["number"])
               pr = json.loads(gh("api", f"repos/{REPO}/pulls/{pr_nr}"))
-              if pr["user"]["login"] != "github-actions[bot]" or pr["user"]["type"] != "Bot":
+              if pr["user"]["login"] not in AGENT_AUTHORS or pr["user"]["type"] != "Bot":
                   print(f"Kein Agenten-PR (Autor {s(pr['user']['login'])}): uebersprungen.")
                   return 0
               standard = json.loads(gh("api", f"repos/{REPO}"))["default_branch"]
