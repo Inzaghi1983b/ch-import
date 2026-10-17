@@ -1,0 +1,153 @@
+name: Agent-Gate
+
+# Prueft Agenten-PRs (Autor github-actions[bot]) bei jedem neuen Commit und aktiviert dann
+# GitHub-Auto-Merge. Fuehrt NIE Code aus dem PR aus: kein Checkout, nur API-Aufrufe (deshalb ist
+# pull_request_target hier vertretbar). Menschen-PRs werden nicht angefasst.
+# Wirksam als Schutz erst, wenn "gate" im Ruleset main-schutz Pflicht-Check ist.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: agent-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Pruefen und Auto-Merge aktivieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import shlex
+          import subprocess
+          import sys
+
+          GH = shlex.split(os.environ.get("GH_BIN", "gh"))
+          REPO = os.environ["REPO"]
+          PR = os.environ["PR"]
+          HEAD_SHA = os.environ["HEAD_SHA"]
+          AUTHOR = os.environ["AUTHOR"]
+
+          ERLAUBT = re.compile(r"^(src|tests)/")
+          MAX_ZEILEN = 800
+          MAX_DATEIEN = 50
+          TEST_SKIP = re.compile(
+              r"pytest\.mark\.(skip|skipif|xfail)|pytest\.(skip|xfail)\(|importorskip|unittest\.skip"
+          )
+          SRC_RISIKO = re.compile(
+              r"^\s*(import|from)\s+(socket|requests|urllib|http|ftplib|smtplib|subprocess|ctypes"
+              r"|multiprocessing|pickle|shelve)\b|os\.(system|popen)|\beval\(|\bexec\(|__import__"
+          )
+          ASSERT = re.compile(r"^\s*(assert\b|with\s+pytest\.raises|def\s+test_)")
+
+
+          def gh(*args, fatal=True):
+              r = subprocess.run([*GH, *args], capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f"gh {' '.join(args)} endete mit Code {r.returncode}: {r.stderr.strip()}")
+                  if fatal:
+                      sys.exit(1)
+              return r.stdout
+
+
+          def s(text):
+              # Workflow-Befehle (::...::) aus fremden Texten im Log unschaedlich machen.
+              return str(text).replace("::", ": :")
+
+
+          def json_folge(text):
+              teile, dec, i = [], json.JSONDecoder(), 0
+              while i < len(text):
+                  if text[i].isspace():
+                      i += 1
+                      continue
+                  obj, i = dec.raw_decode(text, i)
+                  teile.append(obj)
+              return teile
+
+
+          def bewerte(pr, dateien):
+              """Gibt die Liste der Verstoesse zurueck; leer = Aenderung zulaessig."""
+              v = []
+              if not pr["title"].startswith("[agent] "):
+                  v.append("Titel ohne Praefix '[agent] '")
+              if pr["additions"] + pr["deletions"] > MAX_ZEILEN:
+                  v.append(f"zu gross: {pr['additions'] + pr['deletions']} Zeilen (max {MAX_ZEILEN})")
+              if len(dateien) > MAX_DATEIEN:
+                  v.append(f"zu viele Dateien: {len(dateien)} (max {MAX_DATEIEN})")
+              entfernt = hinzu = 0
+              for d in dateien:
+                  pfade = [d["filename"]] + ([d["previous_filename"]] if d.get("previous_filename") else [])
+                  for p in pfade:
+                      if not ERLAUBT.match(p) or "/../" in p or p.startswith("../"):
+                          v.append(f"Datei ausserhalb src/ und tests/: {s(p)}")
+                  name = d["filename"]
+                  if d["status"] == "removed" and name.startswith("tests/"):
+                      v.append(f"Testdatei geloescht: {s(name)}")
+                  if d["status"] != "removed" and not d.get("patch"):
+                      v.append(f"kein pruefbarer Patch (binaer oder zu gross): {s(name)}")
+                  for zeile in (d.get("patch") or "").splitlines():
+                      if zeile.startswith("+"):
+                          inhalt = zeile[1:]
+                          if name.startswith("tests/") and TEST_SKIP.search(inhalt):
+                              v.append(f"Test uebersprungen/xfail in {s(name)}: {s(inhalt.strip())}")
+                          if name.startswith("src/") and SRC_RISIKO.search(inhalt):
+                              v.append(f"riskanter Aufruf/Import in {s(name)}: {s(inhalt.strip())}")
+                      if name.startswith("tests/") and ASSERT.match(zeile[1:]):
+                          if zeile.startswith("-"):
+                              entfernt += 1
+                          elif zeile.startswith("+"):
+                              hinzu += 1
+              if entfernt > hinzu:
+                  v.append(f"Assertions/Tests netto reduziert: {entfernt} entfernt, {hinzu} hinzugefuegt")
+              return v
+
+
+          def main():
+              if AUTHOR != "github-actions[bot]":
+                  print(f"Kein Agenten-PR (Autor {AUTHOR}): uebersprungen.")
+                  return 0
+              pr = json.loads(gh("api", f"repos/{REPO}/pulls/{PR}"))
+              if pr["head"]["sha"] != HEAD_SHA:
+                  print("HEAD hat sich seit dem Ereignis geaendert; ein neuer Lauf prueft den neuen Stand.")
+                  return 1
+              dateien = [x for teil in json_folge(gh("api", "--paginate", f"repos/{REPO}/pulls/{PR}/files"))
+                         for x in teil]
+              verstoesse = bewerte(pr, dateien)
+              if verstoesse:
+                  print("Gate NICHT bestanden:")
+                  for eintrag in verstoesse:
+                      print(f"  - {eintrag}")
+                  gh("pr", "merge", PR, "--repo", REPO, "--disable-auto", fatal=False)
+                  return 1
+              print(f"Gate bestanden: {len(dateien)} Datei(en), HEAD {HEAD_SHA[:8]}.")
+              if pr.get("draft"):
+                  gh("pr", "ready", PR, "--repo", REPO)
+              if pr.get("auto_merge"):
+                  print("Auto-Merge war schon aktiv; der Check dieses Stands ist trotzdem bestanden.")
+                  return 0
+              gh("pr", "merge", PR, "--repo", REPO, "--auto", "--squash", "--match-head-commit", HEAD_SHA)
+              print("Auto-Merge aktiviert; GitHub merged, sobald alle Pflicht-Checks gruen sind.")
+              return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PY
