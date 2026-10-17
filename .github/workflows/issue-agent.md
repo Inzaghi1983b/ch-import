@@ -41,6 +41,11 @@ safe-outputs:
       - tests/**
     protected-files: blocked
     max-patch-size: 200
+    # PR-Erstellung mit kurzlebigem Token der eigenen GitHub App (ai-projects-agent-pr), nur dieses Repo:
+    # So startet die CI ohne manuelle Freigabe. Variable AGENT_APP_ID, Secret AGENT_APP_KEY.
+    github-app:
+      client-id: ${{ vars.AGENT_APP_ID }}
+      private-key: ${{ secrets.AGENT_APP_KEY }}
   add-comment:
     max: 1
   threat-detection:
