@@ -1,6 +1,6 @@
 import pytest
 
-from chimport.csvlesen import lese_csv
+from chimport.csvlesen import lese_csv, lese_csv_mit_kopf
 
 
 def test_semikolon_und_cp1252(tmp_path):
@@ -99,3 +99,17 @@ def test_falsche_spaltenzahl(tmp_path):
 
     with pytest.raises(ValueError, match="Zeile 3"):
         lese_csv(pfad)
+
+
+def test_lese_csv_mit_kopf_liefert_spaltennamen_und_zeilen(tmp_path):
+    datei = tmp_path / "a.csv"
+    datei.write_text(" name ; ort \nA;Bern\n", encoding="utf-8")
+    spalten, zeilen = lese_csv_mit_kopf(datei)
+    assert spalten == ["name", "ort"]
+    assert zeilen == [{"name": "A", "ort": "Bern"}]
+
+
+def test_lese_csv_mit_kopf_ohne_datenzeilen_behaelt_kopfzeile(tmp_path):
+    datei = tmp_path / "b.csv"
+    datei.write_text("a;b\n", encoding="utf-8")
+    assert lese_csv_mit_kopf(datei) == (["a", "b"], [])
