@@ -93,3 +93,5 @@ Acht Issues (#1-#8), umgesetzt von Codex mit DeepSeek Flash. Messwerte aus `gh a
   (jeder Merge wurde vom Berechtigungspruefer von Claude Code blockiert und musste vom Menschen
   per Skript ausgefuehrt werden), ein weiterer fuer den Fix. Ohne Merge-Freigabe kein PR
   integriert: Autonomiequote bei Code und Tests 8 von 8, bei Integration 0 von 8.
+
+Auto-Merge-Test: positive Probe (GitHub-natives Auto-Merge).
