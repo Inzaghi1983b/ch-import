@@ -59,12 +59,25 @@ def _erste_nicht_leere_zeile(text: str) -> str | None:
 def lese_csv(pfad: str | Path) -> list[dict[str, str]]:
     """Lies eine CSV-Datei und gib die Datenzeilen als Liste von Dicts zurueck.
 
+    Kurzform von ``lese_csv_mit_kopf`` ohne die Spaltennamen; Regeln und Fehler
+    sind dieselben.
+
+    :param pfad: Pfad zur CSV-Datei.
+    :returns: Eine Liste von Dicts (Spaltenname -> Wert) in Dateireihenfolge.
+    """
+    return lese_csv_mit_kopf(pfad)[1]
+
+
+def lese_csv_mit_kopf(pfad: str | Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Lies eine CSV-Datei und gib Spaltennamen und Datenzeilen zurueck.
+
     Die erste nicht leere Zeile ist die Kopfzeile und liefert die Schluessel.
     Spaltennamen werden von Leerzeichen am Rand befreit, Werte bleiben
     unveraendert. Komplett leere Zeilen werden uebersprungen.
 
     :param pfad: Pfad zur CSV-Datei.
-    :returns: Eine Liste von Dicts (Spaltenname -> Wert) in Dateireihenfolge.
+    :returns: Die Spaltennamen in Dateireihenfolge und eine Liste von Dicts
+        (Spaltenname -> Wert) in Dateireihenfolge.
     :raises ValueError: Bei doppelten Spaltennamen, leerer Datei oder einer
         Zeile mit anderer Spaltenzahl als die Kopfzeile. Die Meldung enthaelt
         die 1-basierte Zeilennummer (Kopfzeile = Zeile 1).
@@ -94,4 +107,4 @@ def lese_csv(pfad: str | Path) -> list[dict[str, str]]:
         ergebnis.append(dict(zip(spalten, zeile, strict=True)))
     if not spalten:
         raise ValueError("Leere Datei: keine Kopfzeile in Zeile 1")
-    return ergebnis
+    return spalten, ergebnis

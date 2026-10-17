@@ -15,12 +15,7 @@ import io
 import sys
 from pathlib import Path
 
-from chimport.csvlesen import (
-    _dekodiere,
-    _erkenne_trennzeichen,
-    _erste_nicht_leere_zeile,
-    lese_csv,
-)
+from chimport.csvlesen import lese_csv, lese_csv_mit_kopf
 from chimport.pruefung import Fehler, normalisiere_zeilen, pruefe_zeilen
 
 
@@ -51,16 +46,6 @@ def _formatiere_fehler(fehler: Fehler) -> str:
     )
 
 
-def _kopfzeile(pfad: str | Path) -> list[str]:
-    """Liest die getrimmten Spaltennamen der Kopfzeile einer CSV-Datei."""
-    text = _dekodiere(Path(pfad).read_bytes())
-    kopfzeile = _erste_nicht_leere_zeile(text)
-    if kopfzeile is None:
-        raise ValueError("Leere Datei: keine Kopfzeile in Zeile 1")
-    trennzeichen = _erkenne_trennzeichen(kopfzeile)
-    return [name.strip() for name in next(csv.reader([kopfzeile], delimiter=trennzeichen))]
-
-
 def _als_csv(spalten: list[str], zeilen: list[dict[str, str]]) -> str:
     """Serialisiert Zeilen als CSV mit Semikolon und Kopfzeile."""
     puffer = io.StringIO()
@@ -81,14 +66,13 @@ def _pruefe(pfad: str, schema: dict[str, str]) -> int:
 
 def _normalisiere(pfad: str, schema: dict[str, str], ausgabe: str | None) -> int:
     """Fuehrt den Befehl ``normalisiere`` aus und liefert den Exit-Code."""
-    zeilen = lese_csv(pfad)
+    spalten, zeilen = lese_csv_mit_kopf(pfad)
     fehler = pruefe_zeilen(zeilen, schema)
     if fehler:
         for eintrag in fehler:
             print(_formatiere_fehler(eintrag))
         return 1
 
-    spalten = _kopfzeile(pfad)
     inhalt = _als_csv(spalten, normalisiere_zeilen(zeilen, schema))
     if ausgabe is None:
         sys.stdout.write(inhalt)
