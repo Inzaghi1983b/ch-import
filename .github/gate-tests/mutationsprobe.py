@@ -1,4 +1,8 @@
-"""Mutationsprobe (manuell, ca. 10 Minuten, nicht in der CI): jede absichtlich kaputte Gate-Variante\nmuss die Gate-Tests rot machen. Aufruf vom Repo-Wurzelverzeichnis: python .github/gate-tests/mutationsprobe.py .\n"""
+"""Mutationsprobe (manuell, ca. 10 Minuten, nicht in der CI).
+
+Jede absichtlich kaputte Gate-Variante muss die Gate-Tests rot machen.
+Aufruf vom Repo-Wurzelverzeichnis: python .github/gate-tests/mutationsprobe.py .
+"""
 
 import os
 import subprocess
