@@ -1,11 +1,12 @@
 name: Agent-Gate
 
 # Prueft Agenten-PRs (Autor github-actions[bot] oder die eigene Mini-App) nach jedem abgeschlossenen CI-Lauf und aktiviert dann
-# GitHub-Auto-Merge. Trigger workflow_run, weil per GITHUB_TOKEN erzeugte PRs kein pull_request_target
+# GitHub-Auto-Merge, aber nur wenn das Repo Auto-Merge erlaubt (allow_auto_merge); sonst bleibt der PR unberuehrt. Trigger workflow_run, weil per GITHUB_TOKEN erzeugte PRs kein pull_request_target
 # ausloesen (belegt in ch-import #24/#25: 0 Laeufe). Fuehrt NIE Code oder Artefakte aus dem PR aus:
 # kein Checkout, nur API-Aufrufe. Alles Wesentliche (Lauf, PR, Autor, HEAD, Pflicht-Check) wird
 # unabhaengig ueber die GitHub-API geprueft, nicht dem Ereignis geglaubt.
-# Wirksam als Schutz erst, wenn "gate" im Ruleset main-schutz Pflicht-Check ist.
+# Setzt pro Commit den Check-Run "agent-gate" (success/failure); er ist im Ruleset main-schutz Pflicht-Check.
+# Fehlt er (Gate lief nicht / neuer HEAD), ist der Merge blockiert.
 
 on:
   workflow_run:
@@ -24,7 +25,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: read
-      checks: read
+      checks: write
       contents: write
       pull-requests: write
     steps:
@@ -52,6 +53,7 @@ jobs:
           CI_NAME = "CI"
           CI_PFAD = ".github/workflows/ci.yml"
           PFLICHT_CHECK = "test"
+          CHECK_NAME = "agent-gate"  # wird im Ruleset Pflicht-Check (App 15368)
           PFLICHT_APP_ID = 15368  # GitHub Actions
 
           ERLAUBT = re.compile(r"^(src|tests)/")
@@ -129,12 +131,31 @@ jobs:
               return v
 
 
+          ERGEBNIS = {"text": "", "melden": False}
+
+
           def stopp(text):
               print(f"STOPP: {s(text)}")
+              ERGEBNIS["text"] = f"STOPP: {s(text)}"
               return 1
 
 
-          def main():
+          def melde(conclusion, text):
+              """Setzt den Check-Run agent-gate fuer genau diesen Commit (fehlt er, ist der Merge blockiert)."""
+              felder = ["-f", "status=completed", "-f", f"conclusion={conclusion}",
+                        "-f", f"output[title]=Agent-Gate: {conclusion}", "-f", f"output[summary]={s(text)[:900]}"]
+              vorhanden = [c for teil in json_folge(gh("api", "--paginate",
+                                                       f"repos/{REPO}/commits/{HEAD_SHA}/check-runs?check_name={CHECK_NAME}"))
+                           for c in teil["check_runs"]
+                           if c["name"] == CHECK_NAME and c["app"]["id"] == PFLICHT_APP_ID]
+              if vorhanden:
+                  gh("api", "-X", "PATCH", f"repos/{REPO}/check-runs/{vorhanden[-1]['id']}", *felder)
+              else:
+                  gh("api", "-X", "POST", f"repos/{REPO}/check-runs", "-f", f"name={CHECK_NAME}",
+                     "-f", f"head_sha={HEAD_SHA}", *felder)
+
+
+          def pruefe():
               lauf = json.loads(gh("api", f"repos/{REPO}/actions/runs/{RUN_ID}"))
               if lauf["repository"]["full_name"] != REPO or lauf["name"] != CI_NAME or lauf["path"] != CI_PFAD:
                   return stopp("kein CI-Lauf dieses Repos")
@@ -146,6 +167,7 @@ jobs:
               if lauf["conclusion"] in ("cancelled", "skipped", "action_required", "stale"):
                   print(f"CI-Lauf {lauf['conclusion']}: nichts zu tun.")
                   return 0
+              ERGEBNIS["melden"] = True
               if lauf["conclusion"] != "success":
                   return stopp(f"CI-Lauf nicht erfolgreich ({lauf['conclusion']})")
               zuordnung = lauf.get("pull_requests") or []
@@ -155,8 +177,10 @@ jobs:
               pr = json.loads(gh("api", f"repos/{REPO}/pulls/{pr_nr}"))
               if pr["user"]["login"] not in AGENT_AUTHORS or pr["user"]["type"] != "Bot":
                   print(f"Kein Agenten-PR (Autor {s(pr['user']['login'])}): uebersprungen.")
+                  ERGEBNIS["text"] = f"Kein Agenten-PR (Autor {s(pr['user']['login'])}): nicht zustaendig."
                   return 0
-              standard = json.loads(gh("api", f"repos/{REPO}"))["default_branch"]
+              repo = json.loads(gh("api", f"repos/{REPO}"))
+              standard = repo["default_branch"]
               if (pr["state"] != "open" or pr["head"]["repo"]["full_name"] != REPO
                       or pr["base"]["repo"]["full_name"] != REPO or pr["base"]["ref"] != standard):
                   return stopp("PR nicht offen, aus Fork oder nicht gegen den Standard-Branch")
@@ -174,9 +198,17 @@ jobs:
                   print("Gate NICHT bestanden:")
                   for eintrag in verstoesse:
                       print(f"  - {eintrag}")
+                  ERGEBNIS["text"] = "; ".join(verstoesse)
                   gh("pr", "merge", pr_nr, "--repo", REPO, "--disable-auto", fatal=False)
                   return 1
               print(f"Gate bestanden: PR {pr_nr}, {len(dateien)} Datei(en), HEAD {HEAD_SHA[:8]}.")
+              ERGEBNIS["text"] = f"Gate bestanden: {len(dateien)} Datei(en), HEAD {HEAD_SHA[:8]}."
+              melde("success", ERGEBNIS["text"])
+              ERGEBNIS["melden"] = False
+              if not repo.get("allow_auto_merge"):
+                  # Sonst wuerde `gh pr merge --auto` einen bereits gruenen PR sofort direkt mergen.
+                  print("Auto-Merge ist im Repo nicht erlaubt: keine Integration, Draft-Status unveraendert.")
+                  return 0
               if pr.get("draft"):
                   gh("pr", "ready", pr_nr, "--repo", REPO)
               if pr.get("auto_merge"):
@@ -185,6 +217,13 @@ jobs:
               gh("pr", "merge", pr_nr, "--repo", REPO, "--auto", "--squash", "--match-head-commit", HEAD_SHA)
               print("Auto-Merge aktiviert; GitHub merged, sobald alle Pflicht-Checks gruen sind.")
               return 0
+
+
+          def main():
+              code = pruefe()
+              if ERGEBNIS["melden"]:
+                  melde("success" if code == 0 else "failure", ERGEBNIS["text"] or "ohne Angabe")
+              return code
 
 
           if __name__ == "__main__":
