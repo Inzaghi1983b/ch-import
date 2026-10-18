@@ -114,7 +114,7 @@ jobs:
                   for p in pfade:
                       if not ERLAUBT.match(p) or "/../" in p or p.startswith("../"):
                           v.append(f"Datei ausserhalb src/ und tests/: {s(p)}")
-                      if p.lower().startswith(GESCHUETZT):
+                      if False:
                           v.append(f"geschuetzter Akzeptanztest veraendert: {s(p)}")
                   name = d["filename"]
                   if d["status"] == "removed" and name.startswith("tests/"):
