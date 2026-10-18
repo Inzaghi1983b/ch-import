@@ -87,6 +87,8 @@ def lauf(
     repo=None,
     check=None,
     prraw=None,
+    akz=None,
+    akz404=False,
 ):
     fx = tempfile.mkdtemp()
     for n, v in (
@@ -95,8 +97,11 @@ def lauf(
         ("checks", chk or checks()),
         ("files", dateien if dateien is not None else [datei("src/p/a.py")]),
         ("repo", repo or {"default_branch": "main", "allow_auto_merge": True}),
+        ("akzeptanz", akz if akz is not None else [{"name": "test_a.py"}, {"name": "test_x.py"}]),
     ):
         json.dump(v, open(os.path.join(fx, n + ".json"), "w"))
+    if akz404:
+        open(os.path.join(fx, "akzeptanz_404"), "w").write("1")
     if prraw is not None:
         open(os.path.join(fx, "pr.json"), "w").write(prraw)
     env = dict(
@@ -697,5 +702,159 @@ for nr in (24, 25, 30, 37):
             writes=D,
         )
     )
+
+
+# --- C1: Spec-first-Pflicht (Akzeptanztest muss auf dem Standard-Branch existieren) ---
+def spec(*namen):
+    return [{"name": n} for n in namen]
+
+
+R(
+    lauf(
+        "C1: Modul mit Akzeptanztest -> ok",
+        "pass",
+        [datei("src/chimport/jahr.py")],
+        akz=spec("test_jahr.py"),
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "C1: Modul ohne Akzeptanztest -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz=spec("test_plz.py"),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: leeres Verzeichnis -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz=[],
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: Verzeichnis fehlt (404) -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz404=True,
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: API liefert Muell -> failure (fail closed)",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz={"message": "x"},
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: zwei Module, eines ohne Spec -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py"), datei("src/chimport/neu.py")],
+        akz=spec("test_jahr.py"),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: zwei Module mit Spec -> ok",
+        "pass",
+        [datei("src/chimport/jahr.py"), datei("src/chimport/neu.py"), datei("tests/test_neu.py")],
+        akz=spec("test_jahr.py", "test_neu.py"),
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "C1: __init__/__main__/_privat brauchen keine Spec",
+        "pass",
+        [
+            datei("src/chimport/__init__.py"),
+            datei("src/chimport/__main__.py"),
+            datei("src/chimport/_hilfe.py"),
+        ],
+        akz=[],
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "C1: nur Tests geaendert -> ok ohne Spec",
+        "pass",
+        [datei("tests/test_jahr.py")],
+        akz=[],
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "C1: geloeschtes Modul braucht keine Spec",
+        "pass",
+        [datei("src/chimport/alt.py", status="removed", patch="@@ -1 +0,0 @@\n-x = 1\n")],
+        akz=[],
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "C1: Spec-Datei anderer Name zaehlt nicht",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz=spec("jahr.py", "test_jahr_alt.py", "README.md"),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: Auto-Merge aus + Spec fehlt -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        akz=[],
+        repo={"default_branch": "main", "allow_auto_merge": False},
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: App-PR ohne Spec -> failure",
+        "fail",
+        [datei("src/chimport/jahr.py")],
+        prd=pr(user=APP),
+        akz=[],
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "C1: Mensch-PR ohne Spec: ignoriert",
+        "pass",
+        [datei("src/chimport/jahr.py")],
+        prd=pr(user={"login": "Inzaghi1983b", "type": "User"}),
+        akz=[],
+        check=["check success"],
+        writes=[],
+    )
+)
 print("ALLE OK" if all(res) else f"{res.count(False)} FEHLER", f"({len(res)} Faelle)")
 sys.exit(0 if all(res) else 1)
