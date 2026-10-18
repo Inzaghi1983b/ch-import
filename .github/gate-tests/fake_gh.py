@@ -19,6 +19,11 @@ if a[0] == "api":
     if "-X" in a and "check-runs" in path:
         concl = [x.split("=", 1)[1] for x in a if x.startswith("conclusion=")][0]
         log(("check-patch " if a[a.index("-X") + 1] == "PATCH" else "check ") + concl)
+    elif "/contents/tests/akzeptanz" in path:
+        if os.path.exists(os.path.join(fx, "akzeptanz_404")):
+            print('{"message": "Not Found"}')
+            sys.exit(1)
+        print(load("akzeptanz.json"))
     elif "/actions/runs/" in path:
         print(load("run.json"))
     elif "/check-runs" in path:

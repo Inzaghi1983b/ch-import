@@ -69,6 +69,9 @@ jobs:
           ASSERT = re.compile(r"^\s*(assert\b|with\s+pytest\.raises|def\s+test_)")
           # Vorab von Menschen geschriebene Akzeptanztests: Bot-PRs duerfen sie weder anlegen noch aendern.
           GESCHUETZT = "tests/akzeptanz/"
+          # Spec-first: jedes geaenderte Modul src/<paket>/<modul>.py braucht auf dem Standard-Branch
+          # den von Menschen gemergten Akzeptanztest tests/akzeptanz/test_<modul>.py.
+          MODUL = re.compile(r"^src/(?:[^/]+/)+([A-Za-z0-9][A-Za-z0-9_]*)\.py$")
           # Vom Agenten deklarierte Abweichung vom Auftrag (Zeile "ABWEICHUNG: ..." im PR-Text).
           ABWEICHUNG = re.compile(r"^[\s>*_-]*ABWEICHUNG\b[\s*_]*:[\s*_]*(.*)$", re.I | re.M)
           KEINE_ABWEICHUNG = {"keine", "kein", "nein", "-", "none", "n/a", "entfaellt"}
@@ -99,7 +102,7 @@ jobs:
               return teile
 
 
-          def bewerte(pr, dateien):
+          def bewerte(pr, dateien, akzeptanz):
               """Gibt die Liste der Verstoesse zurueck; leer = Aenderung zulaessig."""
               v = []
               if not pr["title"].startswith("[agent] "):
@@ -135,6 +138,12 @@ jobs:
                               hinzu += 1
               if entfernt > hinzu:
                   v.append(f"Assertions/Tests netto reduziert: {entfernt} entfernt, {hinzu} hinzugefuegt")
+              module = sorted({m.group(1) for d in dateien if d["status"] != "removed"
+                               for m in [MODUL.match(d["filename"])] if m})
+              for modul in module:
+                  if f"test_{modul}.py" not in akzeptanz:
+                      v.append(f"kein Akzeptanztest (spec-first): tests/akzeptanz/test_{s(modul)}.py "
+                               "fehlt auf dem Standard-Branch")
               for m in ABWEICHUNG.finditer(pr.get("body") or ""):
                   text = m.group(1).strip().strip("*_ .").lower()
                   if text not in KEINE_ABWEICHUNG:
@@ -204,7 +213,13 @@ jobs:
                   return stopp(f"Pflicht-Check '{PFLICHT_CHECK}' nicht genau einmal erfolgreich")
               dateien = [x for teil in json_folge(gh("api", "--paginate", f"repos/{REPO}/pulls/{pr_nr}/files"))
                          for x in teil]
-              verstoesse = bewerte(pr, dateien)
+              try:
+                  liste = json.loads(gh("api", f"repos/{REPO}/contents/tests/akzeptanz?ref={standard}",
+                                       fatal=False))
+                  akzeptanz = {e["name"] for e in liste}
+              except (ValueError, TypeError, KeyError):
+                  akzeptanz = set()  # Verzeichnis fehlt oder API-Fehler: sicher = keine Akzeptanztests
+              verstoesse = bewerte(pr, dateien, akzeptanz)
               if verstoesse:
                   print("Gate NICHT bestanden:")
                   for eintrag in verstoesse:
