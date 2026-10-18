@@ -13,7 +13,7 @@ permissions:
 imports:
   - shared/anbieter.md
 timeout-minutes: 30
-max-ai-credits: 50
+max-ai-credits: 4
 max-daily-ai-credits: 200
 network:
   allowed:
@@ -50,7 +50,7 @@ safe-outputs:
     max: 1
   threat-detection:
     continue-on-error: false
-    max-ai-credits: 20
+    max-ai-credits: 1
 ---
 
 # Issue umsetzen
