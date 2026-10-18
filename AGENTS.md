@@ -57,6 +57,15 @@ Windows-1252). Am Ende gibt es eine Kommandozeile `python -m chimport`.
 5. Bleibt eine Pruefung nach drei Korrekturrunden rot: aufhoeren und den Fehler im
    Pull-Request-Text offen beschreiben, nicht Tests abschwaechen oder loeschen.
 
+## Akzeptanztests und Widersprueche
+
+- Akzeptanztests in `tests/akzeptanz/` definieren das fachliche Soll. Widerspricht einer davon einer
+  Regel in dieser Datei oder dem Issue, **klaert ein Mensch den Widerspruch vor dem Bau** (Spec oder
+  diese Datei per Pull Request anpassen). Das Label `agent` kommt erst danach.
+- Stoesst der Agent trotzdem auf einen Widerspruch, baut er nach dem Akzeptanztest und meldet den
+  Widerspruch im Pull-Request-Text mit `ABWEICHUNG: <was und warum>`. Diese Meldung wird nie
+  weggelassen oder abgeschwaecht; der Pull Request braucht dann einen Menschen.
+
 ## Verboten
 
 - Aenderungen an `.github/`, `AGENTS.md`, `pyproject.toml` oder `requirements-dev.txt`.
