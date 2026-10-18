@@ -30,6 +30,14 @@ def geschrieben(praefix):
     return os.path.exists(p) and any(z.startswith(praefix) for z in open(p).read().splitlines())
 
 
+def zaehle():
+    """Zaehlt Abfragen des PR nach dem Auto-Merge-Aufruf (simuliert verzoegerten Merge)."""
+    p = os.path.join(fx, "zaehler")
+    n = int(open(p).read()) if os.path.exists(p) else 0
+    open(p, "w").write(str(n + 1))
+    return n
+
+
 def fehler(text, code=1):
     print(text, file=sys.stderr)
     sys.exit(code)
@@ -82,10 +90,20 @@ if a[0] == "api":
         d = json.loads(load("files.json"))
         for i in range(0, max(len(d), 1), 30):
             print(json.dumps(d[i : i + 30]))
+    elif roh.endswith("/pulls") and "/commits/" in roh:
+        print(load("commit_pulls.json"))
     elif roh.endswith("/pulls") and hat("pulls.json"):
         print(load("pulls.json"))
     elif "/pulls/" in path:
-        print(load("pr_nach.json" if hat("pr_nach.json") and geschrieben("auto") else "pr.json"))
+        if geschrieben("auto") and (hat("pr_nach.json") or hat("pr_wartet.json")):
+            k = int(load("merge_nach_abfragen")) if hat("merge_nach_abfragen") else 0
+            z = zaehle()
+            if z < k or not hat("pr_nach.json"):
+                print(load("pr_wartet.json" if hat("pr_wartet.json") else "pr.json"))
+            else:
+                print(load("pr_nach.json"))
+        else:
+            print(load("pr.json"))
     elif roh.count("/") == 4 and "/commits/" in roh:
         print(load("main.json"))
     elif roh.count("/") == 2:
