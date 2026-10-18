@@ -75,6 +75,22 @@ def checks(sha=SHA, **kw):
     return {"total_count": 1, "check_runs": [c]}
 
 
+MAIN = "m" * 40
+GRUEN_MAIN = {
+    "workflow_runs": [
+        {
+            "id": 1,
+            "event": "push",
+            "head_sha": MAIN,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-10-18T10:00:00Z",
+        }
+    ]
+}
+KEIN_ISSUE = {"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": []}}}}}
+
+
 def lauf(
     name,
     erwartet,
@@ -89,6 +105,17 @@ def lauf(
     prraw=None,
     akz=None,
     akz404=False,
+    run_id="77",
+    mainrun=None,
+    mainruns=None,
+    mainruns_nach=None,
+    prruns=None,
+    nach=None,
+    closing=None,
+    pulls=None,
+    ref=None,
+    marker=(),
+    stdout=None,
 ):
     fx = tempfile.mkdtemp()
     for n, v in (
@@ -98,8 +125,23 @@ def lauf(
         ("files", dateien if dateien is not None else [datei("src/p/a.py")]),
         ("repo", repo or {"default_branch": "main", "allow_auto_merge": True}),
         ("akzeptanz", akz if akz is not None else [{"name": "test_a.py"}, {"name": "test_x.py"}]),
+        ("main", {"sha": MAIN}),
+        ("mainruns", mainruns if mainruns is not None else GRUEN_MAIN),
+        ("prruns", prruns if prruns is not None else {"workflow_runs": []}),
+        ("closing", closing if closing is not None else KEIN_ISSUE),
+        ("ref", ref if ref is not None else {"object": {"sha": SHA}}),
     ):
         json.dump(v, open(os.path.join(fx, n + ".json"), "w"))
+    for name_, wert_ in (
+        ("main_run", mainrun),
+        ("pr_nach", nach),
+        ("pulls", pulls),
+        ("mainruns_nach", mainruns_nach),
+    ):
+        if wert_ is not None:
+            json.dump(wert_, open(os.path.join(fx, name_ + ".json"), "w"))
+    for m_ in marker:
+        open(os.path.join(fx, m_), "w").write("1")
     if akz404:
         open(os.path.join(fx, "akzeptanz_404"), "w").write("1")
     if prraw is not None:
@@ -109,7 +151,7 @@ def lauf(
         FIXDIR=fx,
         GH_BIN=f'"{sys.executable}" "{os.path.join(here, "fake_gh.py")}"',
         REPO="o/r",
-        RUN_ID="77",
+        RUN_ID=run_id,
         HEAD_SHA=head,
         PYTHONIOENCODING="utf-8",
     )
@@ -129,6 +171,8 @@ def lauf(
         and (writes is None or log == writes)
         and (check is None or cs == check)
     )
+    if stdout is not None:
+        ok = ok and all(x in r.stdout for x in stdout)
     if check is not None:
         log = log + cs
     print(
@@ -137,6 +181,8 @@ def lauf(
     )
     if not ok:
         print("     ", r.stdout.strip().replace("\n", " | "), r.stderr.strip()[:300])
+        if os.environ.get("GATE_TEST_STOP_AT_FIRST_FAIL"):
+            sys.exit(1)
     shutil.rmtree(fx)
     return ok
 
@@ -856,5 +902,727 @@ R(
         writes=[],
     )
 )
+
+
+# --- A2: Kill-Switch, Nach-Merge (CI, Issues, Branch), Neubewertung nach gruener CI auf main ---
+def mainlauf(
+    status="completed",
+    conclusion="success",
+    sha=MAIN,
+    event="push",
+    alter="2026-10-18T10:00:00Z",
+    nr=1,
+):
+    return {
+        "id": nr,
+        "event": event,
+        "head_sha": sha,
+        "status": status,
+        "conclusion": conclusion,
+        "created_at": alter,
+    }
+
+
+def liste(*laeufe):
+    return {"workflow_runs": list(laeufe)}
+
+
+def issues(*nummern, zustand="OPEN", repo="o/r"):
+    knoten = [
+        {"number": n, "state": zustand, "repository": {"nameWithOwner": repo}} for n in nummern
+    ]
+    return {"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": knoten}}}}}
+
+
+def mit_ref(ref="feature/issue-1-x", repo_pr="o/r", merged=False, **kw):
+    p = pr(**kw)
+    p["head"] = {"sha": SHA, "ref": ref, "repo": {"full_name": repo_pr}}
+    if merged:
+        p["merged"] = True
+        p["state"] = "closed"
+    return p
+
+
+def gemergt(**kw):
+    return mit_ref(merged=True, **kw)
+
+
+MENSCH = {"login": "Inzaghi1983b", "type": "User"}
+ROT = liste(mainlauf(conclusion="failure"))
+NEU_OHNE_CI = liste()
+BRANCH = "branch-delete feature/issue-1-x"
+
+# Kill-Switch
+R(lauf("A2 Kill-Switch: main-CI gruen -> weiter", "pass", check=["check success"], writes=A))
+R(
+    lauf(
+        "A2 Kill-Switch: main-CI rot -> failure",
+        "fail",
+        mainruns=ROT,
+        check=["check failure"],
+        writes=D,
+        stdout=["Kill-Switch", "nicht gruen"],
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: main-CI cancelled -> failure",
+        "fail",
+        mainruns=liste(mainlauf(conclusion="cancelled")),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: main-CI laeuft -> failure",
+        "fail",
+        mainruns=liste(mainlauf(status="in_progress", conclusion=None)),
+        check=["check failure"],
+        writes=D,
+        stdout=["laeuft noch"],
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: keine CI fuer main-HEAD -> failure",
+        "fail",
+        mainruns=NEU_OHNE_CI,
+        check=["check failure"],
+        writes=D,
+        stdout=["keine CI auf main"],
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: CI nur fuer anderen Commit -> failure",
+        "fail",
+        mainruns=liste(mainlauf(sha="z" * 40)),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: neuester Lauf rot, aelterer gruen -> failure",
+        "fail",
+        mainruns=liste(
+            mainlauf(nr=1), mainlauf(conclusion="failure", alter="2026-10-18T11:00:00Z", nr=2)
+        ),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: neuester Lauf gruen, aelterer rot -> weiter",
+        "pass",
+        mainruns=liste(
+            mainlauf(conclusion="failure", nr=1), mainlauf(alter="2026-10-18T11:00:00Z", nr=2)
+        ),
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: workflow_dispatch-Lauf zaehlt",
+        "pass",
+        mainruns=liste(mainlauf(event="workflow_dispatch")),
+        check=["check success"],
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: pull_request-Lauf auf main-SHA zaehlt nicht",
+        "fail",
+        mainruns=liste(mainlauf(event="pull_request")),
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: Antwort kaputt -> failure (fail closed)",
+        "fail",
+        mainruns={"x": 1},
+        check=["check failure"],
+        writes=D,
+        stdout=["nicht lesbar"],
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: main rot, Mensch-PR -> success",
+        "pass",
+        prd=pr(user=MENSCH),
+        mainruns=ROT,
+        check=["check success"],
+        writes=[],
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: Auto-Merge aus + main rot -> failure",
+        "fail",
+        mainruns=ROT,
+        repo={"default_branch": "main", "allow_auto_merge": False},
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    lauf(
+        "A2 Kill-Switch: Verstoss hat Vorrang (Meldung)",
+        "fail",
+        [datei("pyproject.toml")],
+        mainruns=ROT,
+        check=["check failure"],
+        writes=D,
+        stdout=["Gate NICHT bestanden"],
+    )
+)
+
+# Nach sofortigem Merge: CI auf main, Issues, Branch
+VOLL = A + ["ci-dispatch main", "issue-close 7", BRANCH]
+R(
+    lauf(
+        "A2 Nach-Merge: CI, Issue und Branch",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=VOLL,
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Draft wird ready, dann alles",
+        "pass",
+        prd=mit_ref(draft=True),
+        nach=gemergt(),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=["ready"] + VOLL,
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: CI fuer neuen Stand schon da -> kein zweiter Dispatch",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        writes=A + ["issue-close 7", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: CI laeuft schon -> kein zweiter Dispatch",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        mainruns_nach=liste(mainlauf(status="in_progress", conclusion=None)),
+        writes=A + ["issue-close 7", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: zwei Issues",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7, 8),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7", "issue-close 8", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: keine verknuepften Issues",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Issue schon geschlossen -> nicht erneut",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7, zustand="CLOSED"),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Issue aus anderem Repo -> nicht anfassen",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7, repo="x/y"),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Auto-Merge wartet (nicht gemergt) -> kein Nachlauf",
+        "pass",
+        prd=mit_ref(),
+        closing=issues(7),
+        writes=A,
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Branch im Fork -> nicht loeschen",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(repo_pr="x/y"),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Head-Branch heisst wie Standard-Branch -> nicht loeschen",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(ref="main"),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Branch weitergezogen -> nicht loeschen",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        ref={"object": {"sha": "9" * 40}},
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Branch schon weg (404) -> ok",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["ref_404"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+    )
+)
+R(
+    lauf(
+        "A2 Nach-Merge: Branch-Branch mit Sonderzeichen wird kodiert",
+        "pass",
+        prd=mit_ref(ref="feature/a b#c"),
+        nach=gemergt(ref="feature/a b#c"),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7", "branch-delete feature/a%20b%23c"],
+    )
+)
+
+# Fehlende Berechtigungen / Fehler: Merge bleibt, Rest laeuft weiter, Job wird rot
+R(
+    lauf(
+        "A2 Fehler: CI-Dispatch verboten -> Rest laeuft, exit 1",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_dispatch"],
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=A + ["issue-close 7", BRANCH],
+        stdout=["NICHT ausgeloest"],
+    )
+)
+R(
+    lauf(
+        "A2 Fehler: Issue schliessen verboten -> Rest laeuft, exit 1",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_issue"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+        stdout=["NICHT geschlossen"],
+    )
+)
+R(
+    lauf(
+        "A2 Fehler: Branch loeschen verboten -> exit 1",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_delete"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+        stdout=["NICHT geloescht"],
+    )
+)
+R(
+    lauf(
+        "A2 Fehler: GraphQL verboten -> exit 1, Branch trotzdem",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        marker=["fail_graphql"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+    )
+)
+R(
+    lauf(
+        "A2 Fehler: Branch-Abfrage 403 -> exit 1, nicht loeschen",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_ref_403"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", "issue-close 7"],
+    )
+)
+
+# Wiederholung nach bereits erfolgtem Merge (idempotent)
+R(
+    lauf(
+        "A2 Wiederholung: gemergter PR, Rest nachholen",
+        "pass",
+        prd=gemergt(),
+        closing=issues(7),
+        writes=["issue-close 7", BRANCH],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2 Wiederholung: nichts mehr zu tun",
+        "pass",
+        prd=gemergt(),
+        closing=issues(7, zustand="CLOSED"),
+        marker=["ref_404"],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2 Wiederholung: CI fehlt noch -> Dispatch",
+        "pass",
+        prd=gemergt(),
+        mainruns=NEU_OHNE_CI,
+        closing=issues(),
+        marker=["ref_404"],
+        writes=["ci-dispatch main"],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2 Wiederholung: gemergter Mensch-PR ignoriert",
+        "pass",
+        prd=gemergt(user=MENSCH),
+        closing=issues(7),
+        writes=[],
+        check=["check success"],
+    )
+)
+
+# Neubewertung nach gruener CI auf main
+BOT_PR = {
+    "number": 5,
+    "user": {"login": "github-actions[bot]", "type": "Bot"},
+    "head": {"sha": SHA, "repo": {"full_name": "o/r"}},
+}
+PRRUN = liste(
+    {"id": 900, "head_sha": SHA, "conclusion": "success", "created_at": "2026-10-18T09:00:00Z"}
+)
+MAINRUN = {
+    "repository": {"full_name": "o/r"},
+    "name": "CI",
+    "path": ".github/workflows/ci.yml",
+    "event": "push",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": MAIN,
+    "head_branch": "main",
+    "head_repository": {"full_name": "o/r"},
+}
+
+
+def n_lauf(name, erwartet, **kw):
+    kw.setdefault("rund", None)
+    kw.setdefault("mainrun", MAINRUN)
+    kw.setdefault("pulls", [BOT_PR])
+    kw.setdefault("prruns", PRRUN)
+    return lauf(name, erwartet, run_id="main", head=MAIN, **kw)
+
+
+R(
+    n_lauf(
+        "A2 Neubewertung: gruener PR wird gemergt + aufgeraeumt",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=VOLL,
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Auto-Merge aus -> nur Check success",
+        "pass",
+        prd=mit_ref(),
+        repo={"default_branch": "main", "allow_auto_merge": False},
+        check=["check success"],
+        writes=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Check wird aktualisiert statt doppelt",
+        "pass",
+        prd=mit_ref(),
+        repo={"default_branch": "main", "allow_auto_merge": False},
+        chk={
+            "check_runs": [
+                dict(checks()["check_runs"][0]),
+                {
+                    "name": "agent-gate",
+                    "conclusion": "failure",
+                    "head_sha": SHA,
+                    "app": {"id": 15368},
+                    "id": 99,
+                },
+            ]
+        },
+        check=["check-patch success"],
+        writes=[],
+    )
+)
+R(n_lauf("A2 Neubewertung: keine offenen PRs", "pass", pulls=[], writes=[], check=[]))
+R(
+    n_lauf(
+        "A2 Neubewertung: PR ohne gruene CI -> uebersprungen",
+        "pass",
+        prruns=liste(),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: CI-Lauf fuer anderen Commit -> uebersprungen",
+        "pass",
+        prruns=liste(
+            {
+                "id": 900,
+                "head_sha": "q" * 40,
+                "conclusion": "success",
+                "created_at": "2026-10-18T09:00:00Z",
+            }
+        ),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Mensch-PR in Liste ignoriert",
+        "pass",
+        pulls=[dict(BOT_PR, user=MENSCH)],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Fork-PR ignoriert",
+        "pass",
+        pulls=[dict(BOT_PR, head={"sha": SHA, "repo": {"full_name": "x/y"}})],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Fork ohne Repo (geloescht) ignoriert",
+        "pass",
+        pulls=[dict(BOT_PR, head={"sha": SHA, "repo": None})],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: main-CI rot -> nichts",
+        "pass",
+        mainrun=dict(MAINRUN, conclusion="failure"),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Lauf nicht zum aktuellen main-Stand -> nichts",
+        "pass",
+        mainrun=dict(MAINRUN, head_sha="y" * 40),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Lauf eines anderen Branches -> nichts",
+        "pass",
+        mainrun=dict(MAINRUN, head_branch="dev"),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Lauf aus Fork -> nichts",
+        "pass",
+        mainrun=dict(MAINRUN, head_repository={"full_name": "x/y"}),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: falscher Workflow -> stopp",
+        "fail",
+        mainrun=dict(MAINRUN, name="Evil"),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: main-CI laeuft (neuer Lauf) -> nichts",
+        "pass",
+        mainruns=liste(
+            mainlauf(),
+            mainlauf(status="in_progress", conclusion=None, alter="2026-10-18T12:00:00Z", nr=2),
+        ),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Verstoss im PR -> failure, kein Merge",
+        "pass",
+        prd=mit_ref(),
+        dateien=[datei("pyproject.toml")],
+        check=["check failure"],
+        writes=D,
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: kaputte PR-Antwort -> Fehler, exit 1",
+        "fail",
+        prraw="{kaputt",
+        writes=[],
+        check=[],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: nur ein Merge je main-CI (zwei PRs)",
+        "pass",
+        prd=mit_ref(),
+        nach=gemergt(),
+        pulls=[BOT_PR, dict(BOT_PR, number=6)],
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=VOLL,
+    )
+)
+R(
+    lauf(
+        "A2: Push-CI auf Nicht-Standard-Branch -> uebersprungen",
+        "pass",
+        run_id="main",
+        head=MAIN,
+        mainrun=dict(MAINRUN, head_branch="dev"),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2: Lauf eines unbekannten Ereignisses -> uebersprungen",
+        "pass",
+        run_id="main",
+        head=MAIN,
+        mainrun=dict(MAINRUN, event="schedule"),
+        writes=[],
+        check=[],
+    )
+)
+
+R(
+    n_lauf(
+        "A2 Neubewertung: Fehler im Nach-Merge -> exit 1",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_dispatch"],
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=A + ["issue-close 7", BRANCH],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: Issue-Fehler im Nach-Merge -> exit 1",
+        "fail",
+        prd=mit_ref(),
+        nach=gemergt(),
+        closing=issues(7),
+        marker=["fail_issue"],
+        mainruns_nach=NEU_OHNE_CI,
+        writes=A + ["ci-dispatch main", BRANCH],
+    )
+)
+R(
+    n_lauf(
+        "A2 Neubewertung: anderer Bot (dependabot) in Liste ignoriert",
+        "pass",
+        pulls=[dict(BOT_PR, user={"login": "dependabot[bot]", "type": "Bot"})],
+        writes=[],
+        check=[],
+    )
+)
+
 print("ALLE OK" if all(res) else f"{res.count(False)} FEHLER", f"({len(res)} Faelle)")
 sys.exit(0 if all(res) else 1)
