@@ -67,6 +67,11 @@ jobs:
               r"|multiprocessing|pickle|shelve)\b|os\.(system|popen)|\beval\(|\bexec\(|__import__"
           )
           ASSERT = re.compile(r"^\s*(assert\b|with\s+pytest\.raises|def\s+test_)")
+          # Vorab von Menschen geschriebene Akzeptanztests: Bot-PRs duerfen sie weder anlegen noch aendern.
+          GESCHUETZT = "tests/akzeptanz/"
+          # Vom Agenten deklarierte Abweichung vom Auftrag (Zeile "ABWEICHUNG: ..." im PR-Text).
+          ABWEICHUNG = re.compile(r"^[\s>*_-]*ABWEICHUNG\b[\s*_]*:[\s*_]*(.*)$", re.I | re.M)
+          KEINE_ABWEICHUNG = {"keine", "kein", "nein", "-", "none", "n/a", "entfaellt"}
 
 
           def gh(*args, fatal=True):
@@ -109,6 +114,8 @@ jobs:
                   for p in pfade:
                       if not ERLAUBT.match(p) or "/../" in p or p.startswith("../"):
                           v.append(f"Datei ausserhalb src/ und tests/: {s(p)}")
+                      if p.lower().startswith(GESCHUETZT):
+                          v.append(f"geschuetzter Akzeptanztest veraendert: {s(p)}")
                   name = d["filename"]
                   if d["status"] == "removed" and name.startswith("tests/"):
                       v.append(f"Testdatei geloescht: {s(name)}")
@@ -128,6 +135,10 @@ jobs:
                               hinzu += 1
               if entfernt > hinzu:
                   v.append(f"Assertions/Tests netto reduziert: {entfernt} entfernt, {hinzu} hinzugefuegt")
+              for m in ABWEICHUNG.finditer(pr.get("body") or ""):
+                  text = m.group(1).strip().strip("*_ .").lower()
+                  if text not in KEINE_ABWEICHUNG:
+                      v.append(f"Abweichung vom Auftrag deklariert (Mensch pruefen): {s(m.group(1).strip())[:200]}")
               return v
 
 

@@ -44,6 +44,10 @@ Windows-1252). Am Ende gibt es eine Kommandozeile `python -m chimport`.
 ## Arbeitsablauf
 
 1. Aufgabe aus dem Issue lesen. Unklarheit nicht raten: Annahme im Pull-Request-Text nennen.
+   Weicht deine Umsetzung von einer Acceptance Criterion des Issues ab (oder laesst du eine aus,
+   oder gewinnt eine Regel aus dieser Datei gegen das Issue), schreibe im Pull-Request-Text eine
+   eigene Zeile `ABWEICHUNG: <was und warum>`. Ein solcher Pull Request wird nicht automatisch
+   gemergt, sondern von einem Menschen geprueft.
 2. Nur `src/` und `tests/` aendern. README nur, wenn die Aufgabe es verlangt.
 3. Fuer jede neue Funktion Tests schreiben, inklusive Grenzfaelle aus dem Issue.
 4. Vor dem Abschluss alle drei Pruefungen ausfuehren und gruen machen:
@@ -56,6 +60,9 @@ Windows-1252). Am Ende gibt es eine Kommandozeile `python -m chimport`.
 ## Verboten
 
 - Aenderungen an `.github/`, `AGENTS.md`, `pyproject.toml` oder `requirements-dev.txt`.
+- Aenderungen an `tests/akzeptanz/`: diese Akzeptanztests gibt ein Mensch vorab vor. Die
+  Implementierung muss sie erfuellen; schlagen sie fehl, die Implementierung anpassen oder nach
+  drei Runden offen melden.
 - Tests loeschen, ueberspringen oder Erwartungen aufweichen, damit sie gruen werden.
 - Neue Abhaengigkeiten, Netzwerkzugriffe, Secrets oder Zugangsdaten im Code.
 - Personen- oder Kundendaten, ausser die Datenklasse oben erlaubt sie ausdruecklich.
