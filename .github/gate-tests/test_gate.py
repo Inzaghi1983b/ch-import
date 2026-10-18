@@ -116,6 +116,9 @@ def lauf(
     ref=None,
     marker=(),
     stdout=None,
+    wartet=None,
+    abfragen=None,
+    commitpulls=None,
 ):
     fx = tempfile.mkdtemp()
     for n, v in (
@@ -130,6 +133,7 @@ def lauf(
         ("prruns", prruns if prruns is not None else {"workflow_runs": []}),
         ("closing", closing if closing is not None else KEIN_ISSUE),
         ("ref", ref if ref is not None else {"object": {"sha": SHA}}),
+        ("commit_pulls", commitpulls if commitpulls is not None else []),
     ):
         json.dump(v, open(os.path.join(fx, n + ".json"), "w"))
     for name_, wert_ in (
@@ -137,9 +141,12 @@ def lauf(
         ("pr_nach", nach),
         ("pulls", pulls),
         ("mainruns_nach", mainruns_nach),
+        ("pr_wartet", wartet),
     ):
         if wert_ is not None:
             json.dump(wert_, open(os.path.join(fx, name_ + ".json"), "w"))
+    if abfragen is not None:
+        open(os.path.join(fx, "merge_nach_abfragen"), "w").write(str(abfragen))
     for m_ in marker:
         open(os.path.join(fx, m_), "w").write("1")
     if akz404:
@@ -154,6 +161,7 @@ def lauf(
         RUN_ID=run_id,
         HEAD_SHA=head,
         PYTHONIOENCODING="utf-8",
+        WARTE_SEKUNDEN="0",
     )
     r = subprocess.run(
         [sys.executable, "-I", GATE],
@@ -361,7 +369,15 @@ R(
     )
 )
 R(lauf("Ereignis-HEAD != Lauf-HEAD", "fail", head="c" * 40, writes=[]))
-R(lauf("Lauf ohne PR-Zuordnung", "fail", rund=run(pull_requests=[]), writes=[]))
+R(
+    lauf(
+        "Lauf ohne PR-Zuordnung: nichts zu tun, kein Check",
+        "pass",
+        rund=run(pull_requests=[]),
+        check=[],
+        writes=[],
+    )
+)
 R(
     lauf(
         "Lauf mit zwei PRs",
@@ -390,7 +406,15 @@ R(
         writes=[],
     )
 )
-R(lauf("PR geschlossen", "fail", prd=pr(state="closed"), writes=[]))
+R(
+    lauf(
+        "PR geschlossen (nicht gemergt): nichts, kein Check",
+        "pass",
+        prd=pr(state="closed"),
+        check=[],
+        writes=[],
+    )
+)
 R(lauf("CI-Lauf rot", "fail", rund=run(conclusion="failure"), writes=[]))
 R(lauf("CI-Lauf cancelled: nichts tun", "pass", rund=run(conclusion="cancelled"), writes=[]))
 R(
@@ -534,10 +558,10 @@ R(
 )
 R(
     lauf(
-        "Check: ohne PR-Zuordnung -> failure",
-        "fail",
+        "Check: ohne PR-Zuordnung -> kein Check",
+        "pass",
         rund=run(pull_requests=[]),
-        check=["check failure"],
+        check=[],
         writes=[],
     )
 )
@@ -1346,7 +1370,7 @@ R(
         prd=gemergt(user=MENSCH),
         closing=issues(7),
         writes=[],
-        check=["check success"],
+        check=[],
     )
 )
 
@@ -1621,6 +1645,296 @@ R(
         pulls=[dict(BOT_PR, user={"login": "dependabot[bot]", "type": "Bot"})],
         writes=[],
         check=[],
+    )
+)
+
+
+# --- A2b: PR-Zuordnung nach dem Merge, begrenztes Warten auf verzoegertes Auto-Merge ---
+def commit_pr(nr=5, merged=True, sha=SHA, repo_name="o/r", base_repo="o/r"):
+    return {
+        "number": nr,
+        "state": "closed" if merged else "open",
+        "merged_at": "2026-10-18T10:00:00Z" if merged else None,
+        "head": {"sha": sha, "repo": {"full_name": repo_name}},
+        "base": {"repo": {"full_name": base_repo}},
+    }
+
+
+OHNE = run(pull_requests=[])
+WARTET = {"x": 1}
+
+
+def mit_head(p, sha):
+    p["head"]["sha"] = sha
+    return p
+
+
+# Zuordnung ueber den Commit (CI-Re-Run nach dem Merge: pull_requests ist leer)
+R(
+    lauf(
+        "A2b Retry: gemergter Bot-PR ueber Commit gefunden, Rest nachgeholt",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr()],
+        prd=gemergt(),
+        closing=issues(7),
+        writes=["issue-close 7", BRANCH],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: App-PR ueber Commit gefunden",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr()],
+        prd=gemergt(user=APP),
+        closing=issues(7),
+        writes=["issue-close 7", BRANCH],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: CI auf main fehlt -> Dispatch nachgeholt",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr()],
+        prd=gemergt(),
+        mainruns=NEU_OHNE_CI,
+        closing=issues(),
+        marker=["ref_404"],
+        writes=["ci-dispatch main"],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: alles schon erledigt -> keine Schreibaufrufe (idempotent)",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr()],
+        prd=gemergt(),
+        closing=issues(7, zustand="CLOSED"),
+        marker=["ref_404"],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: kein gemergter PR zum Commit -> nichts, kein Check",
+        "pass",
+        rund=OHNE,
+        commitpulls=[],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: nur offener PR zum Commit -> nichts, kein Check",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr(merged=False)],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: zwei gemergte PRs (mehrdeutig) -> exit 1, kein Check",
+        "fail",
+        rund=OHNE,
+        commitpulls=[commit_pr(5), commit_pr(6)],
+        prd=gemergt(),
+        closing=issues(7),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: PR mit anderem Head-Commit wird ignoriert",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr(sha="b" * 40)],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: Fork-PR wird ignoriert",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr(repo_name="x/y")],
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: PR-Zuordnung unlesbar -> exit 1, kein Check",
+        "fail",
+        rund=OHNE,
+        commitpulls={"message": "Server Error"},
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b Retry: gemergter PR mit anderem HEAD -> nichts",
+        "pass",
+        rund=OHNE,
+        commitpulls=[commit_pr()],
+        prd=mit_head(gemergt(), "b" * 40),
+        closing=issues(7),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b gemergter PR, CI-Re-Run rot -> kein Failure-Check, Rest nachgeholt",
+        "pass",
+        rund=run(conclusion="failure"),
+        prd=gemergt(),
+        closing=issues(7),
+        writes=["issue-close 7", BRANCH],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b geschlossener (nicht gemergter) Bot-PR mit roter CI -> kein Check",
+        "pass",
+        rund=run(conclusion="failure"),
+        prd=pr(state="closed"),
+        writes=[],
+        check=[],
+    )
+)
+R(
+    lauf(
+        "A2b offener Bot-PR mit roter CI -> weiter Failure-Check",
+        "fail",
+        rund=run(conclusion="failure"),
+        check=["check failure"],
+        writes=[],
+    )
+)
+
+# Begrenztes Warten, wenn GitHub den Merge verzoegert
+R(
+    lauf(
+        "A2b Warten: Merge nach 2 Abfragen -> Nachlauf",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_ref(auto_merge=WARTET),
+        nach=gemergt(),
+        abfragen=2,
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=VOLL,
+    )
+)
+R(
+    lauf(
+        "A2b Warten: Draft, Merge nach 1 Abfrage -> ready, Nachlauf",
+        "pass",
+        prd=mit_ref(draft=True),
+        wartet=mit_ref(auto_merge=WARTET),
+        nach=gemergt(),
+        abfragen=1,
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        writes=["ready"] + VOLL,
+    )
+)
+R(
+    lauf(
+        "A2b Warten: nie gemergt -> exit 0, kein Nachlauf, Hinweis",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_ref(auto_merge=WARTET),
+        writes=A,
+        stdout=["Nicht innerhalb", "CI-Re-Run"],
+    )
+)
+R(
+    lauf(
+        "A2b Warten: Auto-Merge zurueckgenommen -> Abbruch ohne Warten",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_ref(),
+        writes=A,
+        stdout=["kein Warten"],
+    )
+)
+R(
+    lauf(
+        "A2b Warten: HEAD geaendert -> Abbruch",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_head(mit_ref(auto_merge=WARTET), "b" * 40),
+        writes=A,
+        stdout=["kein Warten"],
+    )
+)
+R(
+    lauf(
+        "A2b Warten: PR geschlossen -> Abbruch",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_ref(auto_merge=WARTET, state="closed"),
+        writes=A,
+        stdout=["kein Warten"],
+    )
+)
+R(
+    lauf(
+        "A2b Warten: Zustand unlesbar -> exit 1",
+        "fail",
+        prd=mit_ref(),
+        wartet="kaputt",
+        writes=A,
+        stdout=["nicht lesbar"],
+    )
+)
+R(
+    lauf(
+        "A2b Warten: Auto-Merge schon aktiv -> kein zweiter Aufruf, kein Warten",
+        "pass",
+        prd=mit_ref(auto_merge=WARTET),
+        writes=[],
+    )
+)
+R(
+    n_lauf(
+        "A2b Neubewertung: verzoegerter Merge zaehlt (nur ein PR je CI-Zyklus)",
+        "pass",
+        prd=mit_ref(),
+        pulls=[BOT_PR, dict(BOT_PR, number=6)],
+        wartet=mit_ref(auto_merge=WARTET),
+        writes=A,
+        stdout=["Es wurde schon gemergt"],
+    )
+)
+R(
+    n_lauf(
+        "A2b Neubewertung: verzoegerter Merge, dann Nachlauf-Schritte",
+        "pass",
+        prd=mit_ref(),
+        wartet=mit_ref(auto_merge=WARTET),
+        nach=gemergt(),
+        abfragen=1,
+        closing=issues(7),
+        mainruns_nach=NEU_OHNE_CI,
+        check=["check success"],
+        writes=VOLL,
     )
 )
 

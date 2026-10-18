@@ -22,7 +22,10 @@ MUTANTEN = {
         'for m in ABWEICHUNG.finditer(pr.get("body") or ""):',
         "for m in []:",
     ),
-    "Fremder Autor zugelassen": ('pr["user"]["login"] not in AGENT_AUTHORS or', "False or"),
+    "Fremder Autor zugelassen": (
+        'bot = pr["user"]["login"] in AGENT_AUTHORS and pr["user"]["type"] == "Bot"',
+        "bot = True",
+    ),
     "Pflicht-Check ignoriert": ("if len(pflicht) != 1 or", "if False and"),
     "HEAD-Vergleich entfernt": ('if pr["head"]["sha"] != head_sha:', "if False:"),
     "Spec-Pflicht entfernt": ('if f"test_{modul}.py" not in akzeptanz:', "if False:"),
@@ -54,6 +57,21 @@ MUTANTEN = {
     ),
     "Nachlauf nimmt Mensch-PRs": ('x["user"]["login"] in AGENT_AUTHORS and ', ""),
     "Gemergter PR: kein Nachlauf-Retry": ('if pr.get("merged"):', "if False:"),
+    "Fallback ohne merged-Pflicht": (
+        'if x.get("merged_at") and x["head"]["sha"] == sha',
+        'if x["head"]["sha"] == sha',
+    ),
+    "Fallback: Mehrdeutigkeit akzeptiert": ("if len(kandidaten) > 1:", "if False:"),
+    "Fallback: fremder Head-Commit": ('and x["head"]["sha"] == sha', ""),
+    "Geschlossener PR bekommt Check": ('if pr["state"] != "open":', "if False:"),
+    "Gemergter PR: Mensch wird bereinigt": (
+        'if not bot or pr["head"]["sha"] != head_sha:',
+        "if False:",
+    ),
+    "Warten ignoriert Auto-Merge-Rueckname": ('bool(p.get("auto_merge"))', "True"),
+    "Warten ohne Zeitlimit-Ende": ("for i in range(WARTE_VERSUCHE + 1):", "for i in range(1):"),
+    "Kein Merge-Zaehler nach --auto": ('STAND["gemergt"] += 1  # ab jetzt', "pass  # ab jetzt"),
+    "Warten: Lesefehler nicht gezaehlt": ('STAND["fehler"] += 1', "pass"),
     "Auto-Merge-Pflicht entfernt": ('if not repo.get("allow_auto_merge"):', "if False:"),
 }
 
@@ -70,6 +88,12 @@ def lauf(item):
     )
     return name, r.returncode != 0
 
+
+for _name, (
+    _alt,
+    _neu,
+) in MUTANTEN.items():  # veraltete Anker sofort melden, nicht erst nach Minuten
+    assert _alt in gate, (_name, _alt)
 
 with ThreadPoolExecutor(max_workers=6) as pool:
     ergebnisse = list(pool.map(lauf, MUTANTEN.items()))
